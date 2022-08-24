@@ -1,11 +1,11 @@
 {
-  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "metadata": {
         "title": "Arcanna Orchestrator",
         "description": "For each Incident, Arcanna.Ai platform for delivering decision intelligence predicting human decision",
         "prerequisites": "",
-         "postDeployment": ["1. Assign Microsoft Sentinel Responder role to the Playbook's managed identity."]
+        "postDeployment": [ "1. Assign Microsoft Sentinel Responder role to the Playbook's managed identity." ]
     },
     "parameters": {
         "PlaybookName": {
@@ -578,17 +578,22 @@
                     "outputs": {}
                 },
                 "parameters": {
-                      "$connections": {
+                    "$connections": {
                         "value": {
-                                "azuresentinel": {
+                            "azuresentinel": {
                                 "connectionId": "[resourceId('Microsoft.Web/connections', variables('AzureSentinelConnectionName'))]",
                                 "connectionName": "[variables('AzureSentinelConnectionName')]",
-                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]",
+                                "connectionProperties": {
+                                    "authentication": {
+                                        "type": "ManagedServiceIdentity"
+                                    }
+                                }
                             }
                         }
+                    }
                 }
             }
-        }
         }
     ]
 }
