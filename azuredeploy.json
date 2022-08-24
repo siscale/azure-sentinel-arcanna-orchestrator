@@ -1,0 +1,594 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "metadata": {
+        "title": "Arcanna Orchestrator",
+        "description": "For each Incident, Arcanna.Ai platform for delivering decision intelligence predicting human decision",
+        "prerequisites": "",
+         "postDeployment": ["1. Assign Microsoft Sentinel Responder role to the Playbook's managed identity."]
+    },
+    "parameters": {
+        "PlaybookName": {
+            "defaultValue": "Arcanna-Orchestration",
+            "type": "String"
+        }
+    },
+    "variables": {
+        "AzureSentinelConnectionName": "[concat('azuresentinel-', parameters('PlaybookName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('AzureSentinelConnectionName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('AzureSentinelConnectionName')]",
+                "customParameterValues": {},
+                "parameterValueType": "Alternative",
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('PlaybookName')]",
+            "location": "[resourceGroup().location]",
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('AzureSentinelConnectionName'))]"
+            ],
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        },
+                        "base_url": {
+                            "defaultValue": "<your_public_ip>",
+                            "type": "String"
+                        }
+                    },
+                    "staticResults": {
+                        "HTTP0": {
+                            "status": "Succeeded",
+                            "outputs": {
+                                "headers": {
+                                    "Content-Type": "json"
+                                },
+                                "statusCode": "OK"
+                            }
+                        }
+                    },
+                    "triggers": {
+                        "Microsoft_Sentinel_incident": {
+                            "type": "ApiConnectionWebhook",
+                            "inputs": {
+                                "body": {
+                                    "callback_url": "@{listCallbackUrl()}"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "path": "/incident-creation"
+                            }
+                        }
+                    },
+                    "actions": {
+                        "For_each": {
+                            "foreach": "@body('Parse_Arcanna_Jobs_Response')",
+                            "actions": {
+                                "Compose_URL": {
+                                    "runAfter": {
+                                        "Wait_for_Arcanna_Processing": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "SetVariable",
+                                    "inputs": {
+                                        "name": "arcanna_get_event_status_url",
+                                        "value": "@{concat(variables('arcanna-url'),'events/',body('Parse_Arcanna_Response')?['job_id'],'/' ,body('Parse_Arcanna_Response')?['event_id'])}"
+                                    }
+                                },
+                                "HTTP": {
+                                    "runAfter": {
+                                        "Compose_URL": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Http",
+                                    "inputs": {
+                                        "headers": {
+                                            "Content-Type": "application/json",
+                                            "x-arcanna-api-key": "@variables('arcanna-api-key')"
+                                        },
+                                        "method": "GET",
+                                        "uri": "@variables('arcanna_get_event_status_url')"
+                                    }
+                                },
+                                "Is_Arcanna_Inference_Successful_": {
+                                    "actions": {
+                                        "is_Arcanna_Suggesting_to_Drop_Alert": {
+                                            "actions": {
+                                                "Add_comment_to_incident_(V3)_3": {
+                                                    "runAfter": {},
+                                                    "type": "ApiConnection",
+                                                    "inputs": {
+                                                        "body": {
+                                                            "incidentArmId": "@triggerBody()?['object']?['id']",
+                                                            "message": "<p>Arcanna Inference for Job @{items('For_each')['job_id']} &nbsp;completed.<br>\nArcanna.ai suggests to close this incident<br>\nStatus: @{body('Parse_Arcanna_Inference_response')?['status']}<br>\nResult: @{body('Parse_Arcanna_Inference_response')?['result']}<br>\nIf you don't agree with the resolution , perform investigation and &nbsp;provide Arcanna.Ai feedback on &nbsp;@{concat('https://',parameters('base_url'),'/jobs/feedback-flow/',body('Parse_Arcanna_Response')?['job_id'])}</p>"
+                                                        },
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "post",
+                                                        "path": "/Incidents/Comment"
+                                                    }
+                                                },
+                                                "Update_incident_3": {
+                                                    "runAfter": {
+                                                        "Add_comment_to_incident_(V3)_3": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "ApiConnection",
+                                                    "inputs": {
+                                                        "body": {
+                                                            "classification": {
+                                                                "ClassificationAndReason": "Undetermined",
+                                                                "ClassificationReasonText": "Closed based on Arcanna Decision"
+                                                            },
+                                                            "incidentArmId": "@triggerBody()?['object']?['id']",
+                                                            "severity": "Informational",
+                                                            "status": "Closed",
+                                                            "tagsToAdd": {
+                                                                "TagsToAdd": [
+                                                                    {
+                                                                        "Tag": "arcanna_drop"
+                                                                    }
+                                                                ]
+                                                            }
+                                                        },
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "put",
+                                                        "path": "/Incidents"
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {},
+                                            "else": {
+                                                "actions": {
+                                                    "Add_comment_to_incident_(V3)_2": {
+                                                        "runAfter": {},
+                                                        "type": "ApiConnection",
+                                                        "inputs": {
+                                                            "body": {
+                                                                "incidentArmId": "@triggerBody()?['object']?['id']",
+                                                                "message": "<p>Arcanna Inference for Job @{items('For_each')['job_id']} &nbsp;completed.<br>\nArcanna.ai suggets to investigate this incident with priority<br>\nStatus: @{body('Parse_Arcanna_Inference_response')?['status']}<br>\nResult: @{body('Parse_Arcanna_Inference_response')?['result']}<br>\nPerform incident remediation and once finished provide Arcanna.Ai feedback on &nbsp;@{concat('https://',parameters('base_url'),'/jobs/feedback-flow/',body('Parse_Arcanna_Response')?['job_id'])}</p>"
+                                                            },
+                                                            "host": {
+                                                                "connection": {
+                                                                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                                }
+                                                            },
+                                                            "method": "post",
+                                                            "path": "/Incidents/Comment"
+                                                        }
+                                                    },
+                                                    "Update_incident_2": {
+                                                        "runAfter": {
+                                                            "Add_comment_to_incident_(V3)_2": [
+                                                                "Succeeded"
+                                                            ]
+                                                        },
+                                                        "type": "ApiConnection",
+                                                        "inputs": {
+                                                            "body": {
+                                                                "incidentArmId": "@triggerBody()?['object']?['id']",
+                                                                "severity": "High",
+                                                                "status": "Active",
+                                                                "tagsToAdd": {
+                                                                    "TagsToAdd": [
+                                                                        {
+                                                                            "Tag": "arcanna_escalated"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            "host": {
+                                                                "connection": {
+                                                                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                                }
+                                                            },
+                                                            "method": "put",
+                                                            "path": "/Incidents"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "expression": {
+                                                "and": [
+                                                    {
+                                                        "equals": [
+                                                            "@body('Parse_Arcanna_Inference_response')?['result']",
+                                                            "drop_alert"
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            "type": "If"
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "Parse_Arcanna_Inference_response": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "else": {
+                                        "actions": {
+                                            "Add_comment_to_incident_(V3)": {
+                                                "runAfter": {},
+                                                "type": "ApiConnection",
+                                                "inputs": {
+                                                    "body": {
+                                                        "incidentArmId": "@triggerBody()?['object']?['id']",
+                                                        "message": "<p>Arcanna Inference for Job @{items('For_each')['job_id']} did not process inference.<br>\nError msg: @{body('Parse_Arcanna_Inference_response')?['error_message']}<br>\nStatus: @{body('Parse_Arcanna_Inference_response')?['status']}<br>\nResult: @{body('Parse_Arcanna_Inference_response')?['result']}<br>\nContact your Arcanna Administrator&nbsp;</p>"
+                                                    },
+                                                    "host": {
+                                                        "connection": {
+                                                            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                        }
+                                                    },
+                                                    "method": "post",
+                                                    "path": "/Incidents/Comment"
+                                                }
+                                            },
+                                            "Update_incident": {
+                                                "runAfter": {
+                                                    "Add_comment_to_incident_(V3)": [
+                                                        "Succeeded"
+                                                    ]
+                                                },
+                                                "type": "ApiConnection",
+                                                "inputs": {
+                                                    "body": {
+                                                        "incidentArmId": "@triggerBody()?['object']?['id']",
+                                                        "ownerAction": "Assign",
+                                                        "status": "New",
+                                                        "tagsToAdd": {
+                                                            "TagsToAdd": [
+                                                                {
+                                                                    "Tag": "arcanna-unproccesed"
+                                                                }
+                                                            ]
+                                                        }
+                                                    },
+                                                    "host": {
+                                                        "connection": {
+                                                            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                        }
+                                                    },
+                                                    "method": "put",
+                                                    "path": "/Incidents"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "expression": {
+                                        "and": [
+                                            {
+                                                "equals": [
+                                                    "@body('Parse_Arcanna_Inference_response')?['status']",
+                                                    "OK"
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    "type": "If"
+                                },
+                                "Parse_Arcanna_Inference_response": {
+                                    "runAfter": {
+                                        "HTTP": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "ParseJson",
+                                    "inputs": {
+                                        "content": "@body('HTTP')",
+                                        "schema": {
+                                            "properties": {
+                                                "confidence_level": {
+                                                    "type": "number"
+                                                },
+                                                "error_message": {},
+                                                "event_id": {
+                                                    "type": "string"
+                                                },
+                                                "ingest_timestamp": {
+                                                    "type": "string"
+                                                },
+                                                "is_duplicated": {
+                                                    "type": "boolean"
+                                                },
+                                                "result": {
+                                                    "type": "string"
+                                                },
+                                                "status": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    }
+                                },
+                                "Parse_Arcanna_Response": {
+                                    "runAfter": {
+                                        "Send_to_Arcanna_Incindent_Information": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "ParseJson",
+                                    "inputs": {
+                                        "content": "@body('Send_to_Arcanna_Incindent_Information')",
+                                        "schema": {
+                                            "properties": {
+                                                "error_message": {
+                                                    "type": "string"
+                                                },
+                                                "event_id": {
+                                                    "type": "string"
+                                                },
+                                                "ingest_timestamp": {
+                                                    "type": "string"
+                                                },
+                                                "job_id": {
+                                                    "type": "integer"
+                                                },
+                                                "status": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    }
+                                },
+                                "Send_to_Arcanna_Incindent_Information": {
+                                    "runAfter": {},
+                                    "type": "Http",
+                                    "inputs": {
+                                        "body": {
+                                            "job_id": "@items('For_each')['job_id']",
+                                            "raw_body": "@triggerBody()?['object']?['properties']",
+                                            "title": "@{triggerBody()?['object']?['properties']?['title']}"
+                                        },
+                                        "headers": {
+                                            "Content-Type": "application/json",
+                                            "x-arcanna-api-key": "@variables('arcanna-api-key')"
+                                        },
+                                        "method": "POST",
+                                        "uri": "@{concat(variables('arcanna-url'),'events/')}"
+                                    }
+                                },
+                                "Wait_for_Arcanna_Processing": {
+                                    "runAfter": {
+                                        "Parse_Arcanna_Response": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Wait",
+                                    "inputs": {
+                                        "interval": {
+                                            "count": 12,
+                                            "unit": "Second"
+                                        }
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "Parse_Arcanna_Jobs_Response": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        },
+                        "GET-PUBLIC-IP": {
+                            "runAfter": {
+                                "Initialize_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "method": "GET",
+                                "uri": "https://ifconfig.me/ip"
+                            }
+                        },
+                        "GET_ARCANNA_JOBS": {
+                            "runAfter": {
+                                "GET-PUBLIC-IP": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "headers": {
+                                    "x-arcanna-api-key": "@variables('arcanna-api-key')"
+                                },
+                                "method": "GET",
+                                "retryPolicy": {
+                                    "type": "none"
+                                },
+                                "uri": "@{concat(variables('arcanna-url'),'jobs/')}"
+                            },
+                            "operationOptions": "SuppressWorkflowHeaders",
+                            "runtimeConfiguration": {
+                                "staticResult": {
+                                    "staticResultOptions": "Disabled",
+                                    "name": "HTTP0"
+                                }
+                            }
+                        },
+                        "Initialize_variable": {
+                            "runAfter": {
+                                "Set_ID_overwrite": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "arcanna_get_event_status_url",
+                                        "type": "string",
+                                        "value": "NA"
+                                    }
+                                ]
+                            }
+                        },
+                        "Parse_Arcanna_Jobs_Response": {
+                            "runAfter": {
+                                "GET_ARCANNA_JOBS": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ParseJson",
+                            "inputs": {
+                                "content": "@body('GET_ARCANNA_JOBS')",
+                                "schema": {
+                                    "items": {
+                                        "properties": {
+                                            "data_type": {
+                                                "type": "string"
+                                            },
+                                            "features": {
+                                                "type": "array"
+                                            },
+                                            "job_id": {
+                                                "type": "integer"
+                                            },
+                                            "labels": {
+                                                "items": {
+                                                    "type": "string"
+                                                },
+                                                "type": "array"
+                                            },
+                                            "status": {
+                                                "type": "string"
+                                            },
+                                            "title": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "required": [
+                                            "job_id",
+                                            "data_type",
+                                            "title",
+                                            "status",
+                                            "labels",
+                                            "features"
+                                        ],
+                                        "type": "object"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "Set-Arcanna_api-key": {
+                            "runAfter": {
+                                "Set_Arcanna-Url": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "arcanna-api-key",
+                                        "type": "string",
+                                        "value": "<your_arcanna_api-key>"
+                                    }
+                                ]
+                            }
+                        },
+                        "Set_Arcanna-Url": {
+                            "runAfter": {},
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "arcanna-url",
+                                        "type": "string",
+                                        "value": "http://<your_public_ip>:9666/api/v1/"
+                                    }
+                                ]
+                            }
+                        },
+                        "Set_Default_job_id": {
+                            "runAfter": {
+                                "Set-Arcanna_api-key": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "arcanna_default_job_id",
+                                        "type": "integer",
+                                        "value": 1226
+                                    }
+                                ]
+                            }
+                        },
+                        "Set_ID_overwrite": {
+                            "runAfter": {
+                                "Set_Default_job_id": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "use_same_id",
+                                        "type": "boolean",
+                                        "value": false
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                      "$connections": {
+                        "value": {
+                                "azuresentinel": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('AzureSentinelConnectionName'))]",
+                                "connectionName": "[variables('AzureSentinelConnectionName')]",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                            }
+                        }
+                }
+            }
+        }
+        }
+    ]
+}
