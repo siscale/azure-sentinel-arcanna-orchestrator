@@ -1,0 +1,242 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+        "metadata": {
+        "title": "Arcanna Orchestrator",
+        "description": "For each Incident, Arcanna.Ai platform for delivering decision intelligence predicting human decision",
+        "prerequisites": "",
+         "postDeployment": ["1. Assign Microsoft Sentinel Responder role to the Playbook's managed identity."]
+    },
+    "parameters": {
+        "PlaybookName": {
+            "defaultValue": "Arcanna-Feedback-Loop",
+            "type": "String"
+        }
+    },
+    "variables": {
+        "AzureSentinelConnectionName": "[concat('azuresentinel-', parameters('PlaybookName'))]"
+    },
+    "resources": [
+             {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('AzureSentinelConnectionName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('AzureSentinelConnectionName')]",
+                "customParameterValues": {},
+                "parameterValueType": "Alternative",
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('PlaybookName')]",
+            "location": "[resourceGroup().location]",
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Microsoft_Sentinel_incident": {
+                            "type": "ApiConnectionWebhook",
+                            "inputs": {
+                                "body": {
+                                    "callback_url": "@{listCallbackUrl()}"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "path": "/incident-creation"
+                            }
+                        }
+                    },
+                    "actions": {
+                        "GET-PUBLIC-IP": {
+                            "runAfter": {},
+                            "type": "Http",
+                            "inputs": {
+                                "method": "GET",
+                                "uri": "https://ifconfig.me/ip"
+                            }
+                        },
+                        "Is_Incident_closed": {
+                            "actions": {
+                                "Switch_on_Incident_Clasification.What_classification_was_given": {
+                                    "runAfter": {},
+                                    "cases": {
+                                        "Is_True_Positive": {
+                                            "case": "TruePositive",
+                                            "actions": {
+                                                "HTTP_2": {
+                                                    "runAfter": {},
+                                                    "type": "Http",
+                                                    "inputs": {
+                                                        "body": {
+                                                            "closing_notes": "@triggerBody()?['object']?['properties']?['classificationComment']",
+                                                            "cortex_user": "@triggerBody()?['incidentUpdates']?['updatedBy']",
+                                                            "feedback": "escalate_alert"
+                                                        },
+                                                        "headers": {
+                                                            "Content-Type": "application/json",
+                                                            "x-arcanna-api-key": "@variables('arcanna-api-key')"
+                                                        },
+                                                        "method": "PUT",
+                                                        "uri": "@{concat(variables('arcanna-url'),'events/',triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')}"
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        "Is_Undetermined": {
+                                            "case": "Undetermined",
+                                            "actions": {
+                                                "HTTP": {
+                                                    "runAfter": {},
+                                                    "type": "Http",
+                                                    "inputs": {
+                                                        "body": {
+                                                            "closing_notes": "@triggerBody()?['object']?['properties']?['classificationComment']",
+                                                            "cortex_user": "@triggerBody()?['incidentUpdates']?['updatedBy']",
+                                                            "feedback": "escalate_alert"
+                                                        },
+                                                        "headers": {
+                                                            "Content-Type": "application/json",
+                                                            "x-arcanna-api-key": "@variables('arcanna-api-key')"
+                                                        },
+                                                        "method": "PUT",
+                                                        "uri": "@{concat(variables('arcanna-url'),'events/',triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "default": {
+                                        "actions": {
+                                            "HTTP_3": {
+                                                "runAfter": {},
+                                                "type": "Http",
+                                                "inputs": {
+                                                    "body": {
+                                                        "closing_notes": "@triggerBody()?['object']?['properties']?['classificationComment']",
+                                                        "cortex_user": "@triggerBody()?['incidentUpdates']?['updatedBy']",
+                                                        "feedback": "drop_alert"
+                                                    },
+                                                    "headers": {
+                                                        "": "application/json",
+                                                        "x-arcanna-api-key": "@variables('arcanna-api-key')"
+                                                    },
+                                                    "method": "PUT",
+                                                    "queries": {
+                                                        "Content-Type": ""
+                                                    },
+                                                    "uri": "@{concat(variables('arcanna-url'),'events/',triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')}"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "expression": "@triggerBody()?['object']?['properties']?['classification']",
+                                    "type": "Switch"
+                                }
+                            },
+                            "runAfter": {
+                                "Set_Arcanna_Job_Id": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "equals": [
+                                            "@triggerBody()?['object']?['properties']?['status']",
+                                            "Closed"
+                                        ]
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "Set_Arcanna_Api_key": {
+                            "runAfter": {
+                                "Set_Arcanna_Url": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "arcanna-api-key",
+                                        "type": "string",
+                                        "value": "<your_arcanna_api-key>"
+                                    }
+                                ]
+                            }
+                        },
+                        "Set_Arcanna_Job_Id": {
+                            "runAfter": {
+                                "Set_Arcanna_Api_key": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "arcanna_default_job_id",
+                                        "type": "integer",
+                                        "value": 1226
+                                    }
+                                ]
+                            }
+                        },
+                        "Set_Arcanna_Url": {
+                            "runAfter": {
+                                "GET-PUBLIC-IP": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "arcanna-url",
+                                        "type": "string",
+                                        "value": "http://<your_public_ip>:9666/api/v1/"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                            "$connections": {
+                                "value": {
+                                        "azuresentinel": {
+                                        "connectionId": "[resourceId('Microsoft.Web/connections', variables('AzureSentinelConnectionName'))]",
+                                        "connectionName": "[variables('AzureSentinelConnectionName')]",
+                                        "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                                    }
+                                }
+                        }
+                    }
+            }
+        }
+    ]
+}

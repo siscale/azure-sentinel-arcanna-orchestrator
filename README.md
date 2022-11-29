@@ -3,6 +3,7 @@
 
 
 ## Quick Deployment
+Assign *Microsoft Sentinel Responder* role to the Playbook's managed identity.
 **Deploy with incident trigger** (recommended)
 
 After deployment, attach this playbook to an **automation rule** so it runs when the incident is created.
