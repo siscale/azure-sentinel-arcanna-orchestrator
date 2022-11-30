@@ -5,6 +5,8 @@
 ## Quick Deployment
 Assign *Microsoft Sentinel Responder* role to the Playbook's managed identity.
 Go to your Logic App > *Identity* > Add *Azure role assignments* > Add  *Microsoft Sentinel Responder* 
+<br>
+
 ![image](https://user-images.githubusercontent.com/6702878/204793403-c6be8ca4-2c74-43c2-bd1e-59fb9b9e5143.png)
 
 
