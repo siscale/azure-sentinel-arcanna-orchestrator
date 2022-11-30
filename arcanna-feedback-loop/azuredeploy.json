@@ -52,6 +52,10 @@
                         "$connections": {
                             "defaultValue": {},
                             "type": "Object"
+                        },
+                        "base_url": {
+                            "defaultValue": "<your_public_ip>",
+                            "type": "String"
                         }
                     },
                     "triggers": {
@@ -229,16 +233,21 @@
                     "outputs": {}
                 },
                 "parameters": {
-                            "$connections": {
-                                "value": {
-                                        "azuresentinel": {
-                                        "connectionId": "[resourceId('Microsoft.Web/connections', variables('AzureSentinelConnectionName'))]",
-                                        "connectionName": "[variables('AzureSentinelConnectionName')]",
-                                        "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                    "$connections": {
+                        "value": {
+                            "azuresentinel": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('AzureSentinelConnectionName'))]",
+                                "connectionName": "[variables('AzureSentinelConnectionName')]",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]",
+                                "connectionProperties": {
+                                    "authentication": {
+                                        "type": "ManagedServiceIdentity"
                                     }
                                 }
+                            }
                         }
                     }
+                }
             }
         }
     ]
