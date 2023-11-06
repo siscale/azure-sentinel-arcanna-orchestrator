@@ -105,7 +105,7 @@
                                                             "x-arcanna-api-key": "@variables('arcanna-api-key')"
                                                         },
                                                         "method": "PUT",
-                                                        "uri": "@{concat(variables('arcanna-url'),'events/',triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')}"
+                                                        "uri": "@{concat(variables('arcanna-url'),'events/', variables('arcanna_default_job_id'),triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')}"
                                                     }
                                                 }
                                             }
@@ -127,7 +127,7 @@
                                                             "x-arcanna-api-key": "@variables('arcanna-api-key')"
                                                         },
                                                         "method": "PUT",
-                                                        "uri": "@{concat(variables('arcanna-url'),'events/',triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')}"
+                                                        "uri": "@{concat(variables('arcanna-url'),'events/', variables('arcanna_default_job_id'),triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')}"
                                                     }
                                                 }
                                             }
@@ -152,7 +152,7 @@
                                                     "queries": {
                                                         "Content-Type": ""
                                                     },
-                                                    "uri": "@{concat(variables('arcanna-url'),'events/',triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')}"
+                                                    "uri": "concat(variables('arcanna-url'),'events/',variables('arcanna_default_job_id'),'/',triggerBody()?['object']?['properties']?['incidentNumber'], '/feedback')"
                                                 }
                                             }
                                         }

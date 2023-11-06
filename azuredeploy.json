@@ -383,7 +383,7 @@
                                             "x-arcanna-api-key": "@variables('arcanna-api-key')"
                                         },
                                         "method": "POST",
-                                        "uri": "@{concat(variables('arcanna-url'),'events/')}"
+                                        "uri": "@{concat(variables('arcanna-url'),'events/',triggerBody()?['object']?['properties']?['incidentNumber'])}"
                                     }
                                 },
                                 "Wait_for_Arcanna_Processing": {
